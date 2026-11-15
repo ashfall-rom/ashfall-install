@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **`--resume`**: after phase 1 (the 2.2 GB system flash) the installer records
+  a marker; if the bootloader phase fails or stalls, `--resume` skips phase 1
+  and reruns only the bootloader batch.
+- **No fastboot polling, and a watchdog**: the bootloader wait is a fixed pause
+  plus at most two checks instead of a per-second `fastboot devices` loop (each
+  of those is a new session, and new sessions are what wedge this ABL mid-
+  transfer). Every batch now runs under a watchdog: a stall fails with
+  instructions instead of hanging forever (600-900 s for the bootloader phase,
+  3600 s for the 12 GiB base flash).
 - **`--rescue`**: bootloader-only restore of the complete stock `.31` base
   (`super`, boot chain, `vbmeta`, `vbmeta_system`, `recovery_a/b`), slot A
   pinned, no adb/fastbootd needed. The supported way out of a crash-dump loop

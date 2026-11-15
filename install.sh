@@ -12,6 +12,8 @@
 #   ./install.sh                  # install the version pinned in ./VERSION
 #   ./install.sh --check          # preflight only, no downloads, no writes
 #   ./install.sh --dry-run        # download + verify, print the plan, no writes
+#   ./install.sh --resume         # phase 1 (system) already flashed: redo only
+#                                 # the bootloader phase
 #   ./install.sh --wipe           # erase userdata/metadata too (clean install)
 #   ./install.sh --no-oc          # keep the stock vendor_boot (no GPU overclock)
 #   ./install.sh --migrate        # force the stock .31 base install (repair;
@@ -88,6 +90,7 @@ MIGRATE=0
 NO_MIGRATE=0
 STOCK_ONLY=0
 RESCUE=0
+RESUME=0
 THEN_INSTALL=0
 WAIT_DEBUG=1200
 
@@ -109,6 +112,7 @@ while (($#)); do
     --no-migrate) NO_MIGRATE=1; shift ;;
     --stock) STOCK_ONLY=1; shift ;;
     --rescue) RESCUE=1; shift ;;
+    --resume) RESUME=1; shift ;;
     --then-install) THEN_INSTALL=1; shift ;;
     --wait-debug) WAIT_DEBUG=${2:?--wait-debug needs seconds}; shift 2 ;;
     --yes|-y) ASSUME_YES=1; shift ;;
@@ -122,6 +126,10 @@ done
 
 if ((THEN_INSTALL)) && ((!STOCK_ONLY)); then
   printf 'err --then-install only makes sense with --stock\n' >&2
+  exit 2
+fi
+if ((RESUME)) && ((RESCUE || STOCK_ONLY || MIGRATE)); then
+  printf 'err --resume only resumes an interrupted install\n' >&2
   exit 2
 fi
 if ((RESCUE)) && ((STOCK_ONLY || MIGRATE || THEN_INSTALL)); then
@@ -157,6 +165,45 @@ sha256_file() {
   else
     shasum -a 256 "$1" | awk '{print $1}'
   fi
+}
+
+# fb_batch [fastboot args...]: one fastboot process with a watchdog.
+# A wedged ABL makes fastboot hang on the first transfer; without a watchdog
+# the installer would wait forever instead of telling the user what to do.
+FB_TIMEOUT=${ASH_FASTBOOT_TIMEOUT:-1800}
+fb_batch() {
+  local secs=$FB_TIMEOUT rc=0 pid wd
+  local -a cmd=(fastboot)
+  [[ -n $SERIAL ]] && cmd+=(-s "$SERIAL")
+  cmd+=("$@")
+  say "fastboot ${cmd[*]:2}   (timeout ${secs}s)"
+  "${cmd[@]}" &
+  pid=$!
+  (
+    sleep "$secs"
+    if kill -0 "$pid" 2>/dev/null; then
+      printf '\nwarn fastboot made no progress for %ss; the bootloader is wedged - killing the client\n' "$secs" >&2
+      pkill -x fastboot 2>/dev/null || true
+    fi
+  ) &
+  wd=$!
+  wait "$pid" || rc=$?
+  kill "$wd" 2>/dev/null || true
+  wait "$wd" 2>/dev/null || true
+  return $rc
+}
+
+# wait_for_bootloader: give the ABL time to enumerate, then check at most
+# twice.  Never poll in a loop: every `fastboot devices` is a new session and
+# the RP5 bootloader wedges when sessions open between transfers (issue #54).
+wait_for_bootloader() {
+  local i
+  sleep "${ASH_BOOTLOADER_WAIT:-12}"
+  for i in 1 2; do
+    fb_ devices 2>/dev/null | grep -q "$SERIAL" && return 0
+    sleep 5
+  done
+  return 1
 }
 
 verify_one() {
@@ -307,7 +354,8 @@ flash_base() {
 
   say "one fastboot process: ${#FW_IMAGES[@]} flashes + wipe + set_active a + reboot"
   say "this takes 15-20 minutes; do not unplug, do not open another fastboot"
-  if ! fb_ "${BATCH[@]}"; then
+  FB_TIMEOUT=3600
+  if ! fb_batch "${BATCH[@]}"; then
     die "the base flash did not finish.
        Do NOT unplug. Run: fastboot -s $SERIAL reboot   (or hold Power 15 s)
        Then re-run:  $0 --rescue
@@ -639,6 +687,11 @@ if ((DRY_RUN)); then
 fi
 
 # --- phase 1: system image (fastbootd) --------------------------------------
+MARKER="$DL/.phase1-done"
+if ((RESUME)); then
+  [[ -f $MARKER ]] || die "--resume: no completed phase 1 recorded in $DL. Run a normal install."
+  ok "phase 1 already flashed ($MARKER); resuming at the bootloader"
+else
 step "Phase 1/2: system image (fastbootd)"
 adb_ reboot fastboot
 MODE=""
@@ -668,20 +721,17 @@ if ! fb_ flash "system_$SLOT" "$DL/system.img"; then
    Nothing else is touched; see docs/recovery.md"
 fi
 ok "system_$SLOT flashed"
+: > "$MARKER"
+fi
 
 # --- phase 2: bootloader (vendor_boot + vbmeta + optional wipe) -------------
 # One fastboot process for the whole bootloader-side batch: the RP5 ABL wedges
 # when a new fastboot opens between transfers (issue #54).
 step "Phase 2/2: bootloader (vbmeta$( ((OC)) && echo ', vendor_boot')$([[ $WIPE == 1 ]] && echo ', wipe'))"
 fb_ reboot bootloader || warn "fastboot reboot bootloader failed; trying adb"
-for ((i = 0; i < 90; i++)); do
-  fb_ devices 2>/dev/null | grep -q "$SERIAL" && break
-  sleep 1
-done
-if ! fb_ devices 2>/dev/null | grep -q "$SERIAL"; then
-  # Fallback path when fastbootd cannot jump to the bootloader: let Android
-  # come up (the old system is still installed and bootable) and reboot from
-  # there. Never needed on a healthy device.
+if ! wait_for_bootloader; then
+  # Fallback when fastbootd cannot jump to the bootloader: let Android come up
+  # (the old system is still bootable) and reboot from there.
   warn "bootloader not reached from fastbootd; rebooting to Android and retrying"
   adb_ wait-for-device >/dev/null 2>&1 || true
   for ((i = 0; i < 120; i++)); do
@@ -689,20 +739,15 @@ if ! fb_ devices 2>/dev/null | grep -q "$SERIAL"; then
     sleep 2
   done
   adb_ reboot bootloader
-  for ((i = 0; i < 90; i++)); do
-    fb_ devices 2>/dev/null | grep -q "$SERIAL" && break
-    sleep 1
-  done
+  wait_for_bootloader ||
+    die "the device did not reach the bootloader.
+       Hold Power ~15 s, then Volume Down + Power for the bootloader, then run:
+         $0 --resume
+       (phase 1 is already on the device; --resume skips it)"
 fi
-fb_ devices 2>/dev/null | grep -q "$SERIAL" ||
-  die "device did not reach the bootloader. Hold Power 15 s, then Power+Volume Down, and re-run; see docs/recovery.md"
-
-PRODUCT=$(fb_getvar product)
-UNLOCKED=$(fb_getvar unlocked)
-[[ $PRODUCT == kona ]] || die "bootloader reports product '${PRODUCT:-unknown}', expected 'kona'"
-[[ $UNLOCKED == yes ]] ||
-  die "the bootloader is locked. Unlock it first: adb reboot bootloader && fastboot flashing unlock, confirm on the device (this erases data), then re-run"
-ok "bootloader: kona, unlocked"
+# No getvars here: kona/unlocked were checked in the adb preflight, and each
+# getvar costs a fastboot session, which is what wedges this ABL (#54).
+ok "bootloader ready (product/unlocked already checked in preflight)"
 
 BATCH=(--disable-verity --disable-verification flash vbmeta "$DL/vbmeta.img")
 if ((OC)); then
@@ -712,9 +757,16 @@ if ((WIPE)); then
   BATCH+=(erase userdata erase metadata)
 fi
 BATCH+=(reboot)
-say "one fastboot process: fastboot --disable-verity --disable-verification flash vbmeta vbmeta.img ... reboot"
-fb_ "${BATCH[@]}" ||
-  die "the bootloader flash failed. Do NOT unplug: run 'fastboot -s $SERIAL reboot' (or hold Power 15 s), then re-run the installer"
+FB_TIMEOUT=900
+say "one fastboot process, do not unplug; a stall is detected after ${FB_TIMEOUT}s"
+if ! fb_batch "${BATCH[@]}"; then
+  die "the bootloader phase did not finish (wedged ABL or USB drop).
+       Do NOT unplug.
+       1. Hold Power ~15 s, then Volume Down + Power to return to the bootloader.
+       2. Re-run:  $0 --resume${SERIAL:+ --serial $SERIAL}
+          (phase 1 is already flashed; only the bootloader phase runs)
+       If it wedges again, run the full base rescue instead:  $0 --rescue"
+fi
 ok "bootloader writes done"
 
 step "Waiting for AshFall to boot"

@@ -76,6 +76,7 @@ Useful options:
 | `--wipe` | erase userdata + metadata (clean install, needed when switching from another ROM) |
 | `--release TAG` | install another version pinned in `releases/` (rollback) |
 | `--serial X` | pick a device when several are attached |
+| `--resume` | phase 1 (system) already flashed: rerun only the bootloader phase |
 | `--fresh-download` | ignore files already in `ashfall-download/` |
 | `--yes` | no confirmation prompt |
 
