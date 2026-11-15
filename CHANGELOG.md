@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **No more getvar gate; one client only.** A Qualcomm ABL with a healthy
+  variable service can still answer erratically once a *second* fastboot client
+  is reading the same replies (mixing `GetVar Variable Not found` with
+  `unknown command`, answers changing between sessions). The installer now
+  refuses to run while any other fastboot process exists, and probes
+  `product`/`slot-count`/`unlocked` in ONE process for information only. A
+  missing variable is no longer treated as a fault, and the false "only a full
+  power cycle clears this" advice is gone.
+- **`super` is flashed with `-S 512M`.** `File is too large to download` is the
+  fastboot client's own 4 GiB download cap, not a bootloader fault: without a
+  chunk size the raw 12 GiB image is sent as one download. `-S 512M` caps each
+  download below this ABL's buffer and the client limit.
+- **`vbmeta_system` is written as `vbmeta_system_a`**, its real GPT name.
 - **Bootloader capability probe before any big write.** The RP5 ABL's variable
   service wedges and then returns nothing for `partition-size:super` /
   `max-download-size`; fastboot turns that into `Sending 'super' (0 KB) FAILED

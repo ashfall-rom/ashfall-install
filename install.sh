@@ -72,7 +72,7 @@ FW_IMAGES=(
   "flash/lun4_vendor_boot_a.bin|vendor_boot|100663296|c6e497410af928da86344edf8ffb491651fc79b3a82c130403249b48a1c6d2f4"
   "flash/lun4_dtbo_a.bin|dtbo|25165824|51b5d76bfddd7141ba1f96eb951d48d50ef4a654c324a0c1eb67d8f99013081a"
   "flash/lun4_vbmeta_a.bin|vbmeta|65536|1e12f714ce4b89ad092df348d1469d92808f2f8535ca68900da53cd5634e7e3b"
-  "flash/lun0_vbmeta_system_a.bin|vbmeta_system|65536|cd445c6a36cf7e6331a9c0c0da80be9d7246fd941651b077606cdddb01757e5d"
+  "flash/lun0_vbmeta_system_a.bin|vbmeta_system_a|65536|cd445c6a36cf7e6331a9c0c0da80be9d7246fd941651b077606cdddb01757e5d"
   "flash/lun4_recovery_a.bin|recovery_a|104857600|12848c7103eb285caaa01d6b51cdd8210b024c8e68cfd85b64677a0835338206"
   "flash/lun4_recovery_b.bin|recovery_b|104857600|12848c7103eb285caaa01d6b51cdd8210b024c8e68cfd85b64677a0835338206"
 )
@@ -193,16 +193,41 @@ fb_batch() {
   return $rc
 }
 
-# fb_service_ok: true when the bootloader answers the two values a large flash
-# needs.  The RP5 ABL wedges its variable service ("GetVar Variable Not found")
-# and then fastboot thinks the partition is 0 bytes and the download limit is 0:
-# "Sending 'super' (0 KB) FAILED (File is too large to download)".  Only a full
-# power cycle restores it, so check before starting a 12 GiB write.
-fb_service_ok() {
-  local part dlsize
-  part=$(fb_ getvar partition-size:super 2>&1 || true)
-  dlsize=$(fb_ getvar max-download-size 2>&1 || true)
-  [[ $part == *0x* && $dlsize == *0x* ]]
+# fastboot_clients / guard_single_fastboot: two fastboot clients on this
+# bootloader corrupt each other's replies (one client reads the other's answers:
+# "GetVar Variable Not found" mixed with "unknown command", answers changing
+# between sessions).  Never run a batch while another fastboot exists - the
+# installer has to be the only one.
+fastboot_clients() {
+  if command -v pgrep >/dev/null 2>&1; then
+    pgrep -x fastboot 2>/dev/null | tr '\n' ' '
+  else
+    ps -A -o comm= 2>/dev/null | awk '$1=="fastboot"{printf "%s ", $2}'
+  fi
+}
+
+guard_single_fastboot() {
+  local pids
+  pids=$(fastboot_clients)
+  [[ -z $pids ]] || die "another fastboot process is running (PID: $pids).
+       Two fastboot clients on this bootloader corrupt each other's replies -
+       that is what 'GetVar Variable Not found' mixed with 'unknown command'
+       means. Close the other terminal's fastboot (Ctrl-C or: pkill -x fastboot)
+       and re-run."
+}
+
+# fb_probe: ONE fastboot process, informational only.  A missing variable is not
+# evidence of anything, so nothing here is a hard requirement except a positive
+# "unlocked: no".
+FB_PRODUCT=""
+FB_SLOTS=""
+FB_UNLOCKED=""
+fb_probe() {
+  local out
+  out=$(fb_ getvar product getvar slot-count getvar unlocked 2>&1 || true)
+  FB_PRODUCT=$(printf '%s\n' "$out" | sed -n 's/^product: //p' | head -1)
+  FB_SLOTS=$(printf '%s\n' "$out" | sed -n 's/^slot-count: //p' | head -1)
+  FB_UNLOCKED=$(printf '%s\n' "$out" | sed -n 's/^unlocked: //p' | head -1)
 }
 
 # wait_for_bootloader: give the ABL time to enumerate, then check at most
@@ -364,38 +389,36 @@ flash_base() {
        Hold Power ~15 s, then Volume Down + Power until the fastboot screen
        appears, then re-run:  $0 --rescue${SERIAL:+ --serial $SERIAL}"
 
-  if ! fb_service_ok; then
-    die "the bootloader's variable service is wedged: it does not report
-       'partition-size:super' or 'max-download-size' (fastboot would try to
-       send 0 KB and fail). Only a full power cycle clears this:
-         1. hold Power ~15 s until the device is off
-         2. Volume Down + Power until the fastboot screen appears
-         3. re-run:  $0 --rescue${SERIAL:+ --serial $SERIAL}
-       Nothing was written."
-  fi
-  ok "bootloader variable service: answering (partition size + download limit)"
-
-  # Getvars are advisory here: this ABL answers some of them only on a fresh
-  # session, and a rescue must not depend on a flaky variable service.
-  product=$(fb_getvar product)
-  unlocked=$(fb_getvar unlocked)
-  if [[ -n $product && $product != kona ]]; then
-    die "the bootloader reports product '$product', expected 'kona' (wrong device?)"
-  fi
-  if [[ $unlocked == no ]]; then
+  guard_single_fastboot
+  fb_probe
+  if [[ $FB_UNLOCKED == no ]]; then
     die "the bootloader is locked; unlock it first (adb reboot bootloader; fastboot flashing unlock) and re-run"
   fi
-  if [[ $product == kona ]]; then
-    ok "bootloader: kona, unlocked=${unlocked:-unknown}"
+  if [[ -n $FB_PRODUCT && $FB_PRODUCT != kona ]]; then
+    die "the bootloader reports product '$FB_PRODUCT', expected 'kona' (wrong device?)"
+  fi
+  if [[ $FB_PRODUCT == kona ]]; then
+    ok "bootloader: kona, unlocked=${FB_UNLOCKED:-unknown}, slots=${FB_SLOTS:-unknown}"
   else
-    warn "the bootloader did not report a product (wedged getvars); continuing - only a kona reaches this point"
+    warn "the bootloader did not report a product; continuing (only a kona reaches this point)"
   fi
 
+  # -S caps one download at 512 MiB, below this ABL's buffer limit and the
+  # client's 4 GiB cap.  Without it a raw 12 GiB super is one download and the
+  # client fails with "File is too large to download", even when the variable
+  # service is healthy.
+  BATCH=(-S 512M)
   for img in "${FW_IMAGES[@]}"; do
     IFS='|' read -r path part bytes sha <<<"$img"
     BATCH+=(flash "$part" "$FW_DIR/images/$path")
   done
-  BATCH+=(erase userdata erase metadata set_active a reboot)
+  BATCH+=(erase userdata erase metadata)
+  if [[ $FB_SLOTS == 2 ]]; then
+    BATCH+=(set_active a)
+  else
+    warn "the bootloader did not report 2 slots; leaving the active slot unchanged"
+  fi
+  BATCH+=(reboot)
 
   say "one fastboot process: ${#FW_IMAGES[@]} flashes + wipe + set_active a + reboot"
   say "this takes 15-20 minutes; do not unplug, do not open another fastboot"
@@ -805,13 +828,12 @@ if ! wait_for_bootloader; then
 fi
 # No product/unlocked getvars here: they were checked over adb in the preflight,
 # and every extra getvar is another session on a fragile service (#54).
-if ! fb_service_ok; then
-  die "the bootloader's variable service is wedged (no 'partition-size:super' /
-       'max-download-size'), so the vbmeta/vendor_boot batch would fail at once.
-       Nothing was written. Power-cycle the device (hold Power ~15 s, then
-       Volume Down + Power) and re-run:  $0 --resume${SERIAL:+ --serial $SERIAL}"
+guard_single_fastboot
+fb_probe
+if [[ $FB_UNLOCKED == no ]]; then
+  die "the bootloader is locked; unlock it first and re-run"
 fi
-ok "bootloader ready and answering (variable service probe passed)"
+ok "bootloader ready (product=${FB_PRODUCT:-unknown}, slots=${FB_SLOTS:-unknown})"
 
 BATCH=(--disable-verity --disable-verification flash vbmeta "$DL/vbmeta.img")
 if ((OC)); then
