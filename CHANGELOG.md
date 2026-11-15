@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **The installer always wipes userdata + metadata.** A no-wipe install from
+  stock keeps foreign `/data` and breaks AshFall features (display rotation,
+  zram ownership, settings). `--wipe` is still accepted as a no-op; the plan,
+  prompt and docs now say the data is erased on every install.
+
 - **Verified end-to-end on hardware (2026-11-15):** `--rescue` wrote the
   complete `.31` base (12 GiB `super`, chunked at 512 MiB) and a normal
   `./install.sh` then flashed the AshFall system image + `vendor_boot`. The RP5

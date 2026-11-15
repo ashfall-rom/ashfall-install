@@ -63,7 +63,7 @@ fastboot --disable-verity --disable-verification flash vbmeta vbmeta.img \
 ```
 
 With `--no-oc` (stock GPU support) drop `flash vendor_boot vendor_boot.img`.
-With a data wipe add `erase userdata erase metadata` before `reboot`.
+The install always wipes data: the batch must contain `erase userdata erase metadata` before `reboot`.
 
 ## 3. First boot
 

@@ -14,7 +14,8 @@ cd ashfall-install
 The installer checks your device, downloads the pinned release, **verifies every
 checksum**, asks once, flashes, reboots twice and waits until AshFall boots.
 It never flashes anything outside `system_<slot>`, `vendor_boot` and `vbmeta`,
-and it keeps your data unless you pass `--wipe`.
+and it **always erases userdata + metadata**. Back up first: there is no
+no-wipe path.
 
 > **Alpha, and a private release repo.** The release contains the stock
 > Retroid/Qualcomm `vendor_boot` payload. Do not redistribute the release
@@ -73,7 +74,7 @@ Useful options:
 | flag | effect |
 |---|---|
 | `--no-oc` | keep the stock `vendor_boot` (no GPU overclock steps at all) |
-| `--wipe` | erase userdata + metadata (clean install, needed when switching from another ROM) |
+| `--wipe` | accepted for compatibility; the installer always erases userdata + metadata |
 | `--release TAG` | install another version pinned in `releases/` (rollback) |
 | `--serial X` | pick a device when several are attached |
 | `--resume` | phase 1 (system) already flashed: rerun only the bootloader phase |
@@ -96,7 +97,7 @@ refuses to run beside another `fastboot` client. Do not unplug.
 | `vbmeta` | stock vbmeta, flashed with verity + verification disabled | required to boot a GSI |
 
 Nothing else is touched — not `boot`, `vendor`, `odm`, `product`,
-`system_ext`, `userdata` (unless `--wipe`), and never any partition on the
+`system_ext`, `userdata` (always erased), and never any partition on the
 NEVER-flash list. Both `vendor_boot` and `vbmeta` are written in **one fastboot
 process**, because the RP5 bootloader wedges when a second one opens between
 transfers.
@@ -139,7 +140,7 @@ device, so there is one implementation, one set of pinned hashes.
 ## First boot, updates, recovery
 
 - **Bootloop or stuck on the animation**: usually stale `/data` from another
-  ROM → `./install.sh --wipe`.
+  ROM → `./install.sh` (it always wipes).
 - **"no space left" during the system flash**: the installer prints the two
   `delete-logical-partition` commands to free the stock `product_*` /
   `system_ext_*` and re-run.
