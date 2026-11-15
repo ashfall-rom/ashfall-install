@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Bootloader capability probe before any big write.** The RP5 ABL's variable
+  service wedges and then returns nothing for `partition-size:super` /
+  `max-download-size`; fastboot turns that into `Sending 'super' (0 KB) FAILED
+  (File is too large to download)` after doing nothing. The installer now probes
+  both and stops in seconds with the power-cycle instruction instead of
+  starting a doomed 12 GiB batch. Applied to `--rescue` and to phase 2.
 - **`--resume`**: after phase 1 (the 2.2 GB system flash) the installer records
   a marker; if the bootloader phase fails or stalls, `--resume` skips phase 1
   and reruns only the bootloader batch.

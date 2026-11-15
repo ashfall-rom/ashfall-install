@@ -193,6 +193,18 @@ fb_batch() {
   return $rc
 }
 
+# fb_service_ok: true when the bootloader answers the two values a large flash
+# needs.  The RP5 ABL wedges its variable service ("GetVar Variable Not found")
+# and then fastboot thinks the partition is 0 bytes and the download limit is 0:
+# "Sending 'super' (0 KB) FAILED (File is too large to download)".  Only a full
+# power cycle restores it, so check before starting a 12 GiB write.
+fb_service_ok() {
+  local part dlsize
+  part=$(fb_ getvar partition-size:super 2>&1 || true)
+  dlsize=$(fb_ getvar max-download-size 2>&1 || true)
+  [[ $part == *0x* && $dlsize == *0x* ]]
+}
+
 # wait_for_bootloader: give the ABL time to enumerate, then check at most
 # twice.  Never poll in a loop: every `fastboot devices` is a new session and
 # the RP5 bootloader wedges when sessions open between transfers (issue #54).
@@ -351,6 +363,17 @@ flash_base() {
     die "the device is not in the bootloader.
        Hold Power ~15 s, then Volume Down + Power until the fastboot screen
        appears, then re-run:  $0 --rescue${SERIAL:+ --serial $SERIAL}"
+
+  if ! fb_service_ok; then
+    die "the bootloader's variable service is wedged: it does not report
+       'partition-size:super' or 'max-download-size' (fastboot would try to
+       send 0 KB and fail). Only a full power cycle clears this:
+         1. hold Power ~15 s until the device is off
+         2. Volume Down + Power until the fastboot screen appears
+         3. re-run:  $0 --rescue${SERIAL:+ --serial $SERIAL}
+       Nothing was written."
+  fi
+  ok "bootloader variable service: answering (partition size + download limit)"
 
   # Getvars are advisory here: this ABL answers some of them only on a fresh
   # session, and a rescue must not depend on a flaky variable service.
@@ -780,9 +803,15 @@ if ! wait_for_bootloader; then
          $0 --resume
        (phase 1 is already on the device; --resume skips it)"
 fi
-# No getvars here: kona/unlocked were checked in the adb preflight, and each
-# getvar costs a fastboot session, which is what wedges this ABL (#54).
-ok "bootloader ready (product/unlocked already checked in preflight)"
+# No product/unlocked getvars here: they were checked over adb in the preflight,
+# and every extra getvar is another session on a fragile service (#54).
+if ! fb_service_ok; then
+  die "the bootloader's variable service is wedged (no 'partition-size:super' /
+       'max-download-size'), so the vbmeta/vendor_boot batch would fail at once.
+       Nothing was written. Power-cycle the device (hold Power ~15 s, then
+       Volume Down + Power) and re-run:  $0 --resume${SERIAL:+ --serial $SERIAL}"
+fi
+ok "bootloader ready and answering (variable service probe passed)"
 
 BATCH=(--disable-verity --disable-verification flash vbmeta "$DL/vbmeta.img")
 if ((OC)); then
