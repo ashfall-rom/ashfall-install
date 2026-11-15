@@ -61,6 +61,29 @@ The ROM repository's `scripts/device/restore-stock.sh` and
 never per-partition). Do not improvise this step; a wrong partition write on
 this bootloader is a hard brick risk.
 
+## Black screen after the logo, `05c6:900e` (init panic on the wrong slot)
+
+Symptom: the RP5 logo shows, the screen goes black, and the device enumerates
+as `Qualcomm ... QUSB_BULK (05c6:900e)`. The panic log says
+`Attempted to kill init! exitcode=0x00007f00`.
+
+Cause: the factory `.31` `super` image only populates **slot A's** dynamic
+partitions. If the bootloader is pointed at slot B, that slot has no `/system`
+or `/vendor`, init starts from the ramdisk, finds nothing and dies.
+
+Fix: point the bootloader back at slot A.
+
+```sh
+adb reboot bootloader      # or: hold Power 15 s, then Volume Down + Power
+fastboot set_active a
+fastboot reboot
+```
+
+If `set_active` says `Invalid Slot`, or `fastboot getvar` answers
+`GetVar Variable Not found`, the USB session is wedged: hold **Power 15 s**,
+re-enter fastboot, and run `set_active a` as the very first command (no getvars
+before it).
+
 ## "no space left" while flashing the system image
 
 The dynamic partition group is 6 GiB. Free the stock partitions the GSI does
