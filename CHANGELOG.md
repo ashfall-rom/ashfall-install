@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **`--rescue`**: bootloader-only restore of the complete stock `.31` base
+  (`super`, boot chain, `vbmeta`, `vbmeta_system`, `recovery_a/b`), slot A
+  pinned, no adb/fastbootd needed. The supported way out of a crash-dump loop
+  or a half-finished install.
+- **Complete base set**: the base install now includes `recovery_a/b`. The ROM
+  does not use recovery, but `adb reboot fastboot` boots it, and a recovery
+  that does not match the stock vbmeta panics — the exact failure behind the
+  2026-11-15 black screens.
 - **`restore-stock.sh`**: put the device back on the stock `.31` firmware
   (pinned download, one fastboot process, wipes data). `--then-install` waits
   for USB debugging to come back and installs AshFall in the same run, so a

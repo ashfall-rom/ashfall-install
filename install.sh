@@ -19,6 +19,9 @@
 #   ./install.sh --no-migrate     # never touch the base firmware (refuse on retail)
 #   ./install.sh --stock          # restore the stock .31 system only (wipes
 #                                 # data), then stop - same as restore-stock.sh
+#   ./install.sh --rescue         # from the bootloader only: rewrite the
+#                                 # complete stock .31 base (wipes data). Works
+#                                 # when Android/fastbootd are dead.
 #   ./install.sh --stock --then-install
 #                                 # restore .31, wait for USB debugging to come
 #                                 # back, then install AshFall in the same run
@@ -68,6 +71,8 @@ FW_IMAGES=(
   "flash/lun4_dtbo_a.bin|dtbo|25165824|51b5d76bfddd7141ba1f96eb951d48d50ef4a654c324a0c1eb67d8f99013081a"
   "flash/lun4_vbmeta_a.bin|vbmeta|65536|1e12f714ce4b89ad092df348d1469d92808f2f8535ca68900da53cd5634e7e3b"
   "flash/lun0_vbmeta_system_a.bin|vbmeta_system|65536|cd445c6a36cf7e6331a9c0c0da80be9d7246fd941651b077606cdddb01757e5d"
+  "flash/lun4_recovery_a.bin|recovery_a|104857600|12848c7103eb285caaa01d6b51cdd8210b024c8e68cfd85b64677a0835338206"
+  "flash/lun4_recovery_b.bin|recovery_b|104857600|12848c7103eb285caaa01d6b51cdd8210b024c8e68cfd85b64677a0835338206"
 )
 FW_DIR="$DL_ROOT/stock-31"
 
@@ -82,6 +87,7 @@ FRESH=0
 MIGRATE=0
 NO_MIGRATE=0
 STOCK_ONLY=0
+RESCUE=0
 THEN_INSTALL=0
 WAIT_DEBUG=1200
 
@@ -102,6 +108,7 @@ while (($#)); do
     --migrate) MIGRATE=1; shift ;;
     --no-migrate) NO_MIGRATE=1; shift ;;
     --stock) STOCK_ONLY=1; shift ;;
+    --rescue) RESCUE=1; shift ;;
     --then-install) THEN_INSTALL=1; shift ;;
     --wait-debug) WAIT_DEBUG=${2:?--wait-debug needs seconds}; shift 2 ;;
     --yes|-y) ASSUME_YES=1; shift ;;
@@ -117,12 +124,16 @@ if ((THEN_INSTALL)) && ((!STOCK_ONLY)); then
   printf 'err --then-install only makes sense with --stock\n' >&2
   exit 2
 fi
+if ((RESCUE)) && ((STOCK_ONLY || MIGRATE || THEN_INSTALL)); then
+  printf 'err --rescue does its own base restore; do not combine it with --stock/--migrate/--then-install\n' >&2
+  exit 2
+fi
 [[ $WAIT_DEBUG =~ ^[0-9]+$ ]] || { printf 'err --wait-debug must be seconds\n' >&2; exit 2; }
 [[ -n $TAG ]] || TAG=$(tr -d ' \n' <"$VERSION_FILE" 2>/dev/null || true)
 [[ -n $TAG ]] || die "no release tag: missing $VERSION_FILE and no --release"
 SUM_FILE="$HERE/releases/$TAG/SHA256SUMS"
-if ((STOCK_ONLY)); then
-  : # a stock restore does not need the AshFall release assets
+if ((STOCK_ONLY || RESCUE)); then
+  : # a stock restore / rescue does not need the AshFall release assets
 else
   [[ -f $SUM_FILE ]] || die "no checksums for '$TAG' in this checkout (releases/$TAG/SHA256SUMS); git pull, or pass a tag it knows"
 fi
@@ -165,7 +176,20 @@ need() {
   done
 }
 
-# --- base migration (retail .189 -> .31) -------------------------------------
+# --- stock .31 base ----------------------------------------------------------
+# AshFall runs on the pre-release .31 base: Android 13 vendor, 5.15 GKI, v4
+# boot. A retail .189 RP5 (Android 11 vendor, 4.19 kernel) cannot boot it, so
+# the base is installed first, from the public Retroid package with every
+# volume and every image hash pinned.
+#
+# The set below is the COMPLETE stock base, not just the partitions Android
+# needs to boot:
+#   * `super` - the factory image only populates slot A's dynamic partitions,
+#     so the active slot must always be A after writing it (2026-11-15).
+#   * `recovery` - the ROM never uses it, but `adb reboot fastboot` boots the
+#     recovery ramdisk; a recovery that does not match the stock vbmeta panics
+#     and strands the device in crash-dump mode. Installer versions before
+#     2026-11-15 skipped it and hit exactly that.
 sevenzip() {
   local c
   if [[ -n ${ASH_INSTALLER_7Z:-} ]]; then printf '%s' "$ASH_INSTALLER_7Z"; return 0; fi
@@ -175,49 +199,19 @@ sevenzip() {
   return 1
 }
 
-# migrate_base: install the stock .31 firmware, then stop and ask for a re-run
-# (the wipe also erases the adb authorization). Every write is one fastboot
-# process, as the bootloader requires.
-migrate_base() {
+# fetch_base_images: download, unpack and verify the stock base (no device
+# access, so it is safe to run before anything is written).
+fetch_base_images() {
   local zip free_kb need_kb i path part bytes sha img want got
-
-  if ((STOCK_ONLY)); then
-    step "Restore the stock .31 system"
-    say "  Flashes the stock .31 firmware and wipes data. The device stays on"
-    say "  stock Android 13 afterwards unless --then-install was given."
-  else
-    step "Base firmware: retail .189 -> AshFall base .31"
-    say "  AshFall is an Android 17 system on the Android 13 / 5.15 vendor of the"
-    say "  pre-release .31 firmware. This RP5 runs the retail firmware (vendor"
-    say "  SDK ${VENDOR_SDK:-?}), which cannot boot it."
-  fi
-  say ""
-  say "  The installer will install the stock .31 base first:"
-  say "    download   3.1 GB (public Retroid package, pinned SHA-256)"
-  say "    unpack     13.2 GB (super + boot chain)"
-  say "    flash      super, boot, init_boot, vendor_boot, dtbo, vbmeta,"
-  say "               vbmeta_system in ONE fastboot process (~15-20 min)"
-  say "    wipe       userdata + metadata (all data is lost)"
-  say ""
-  if ((THEN_INSTALL)); then
-    say "  After it finishes the device boots stock .31; the installer then waits"
-    say "  for USB debugging to come back and installs AshFall in the same run."
-  elif ((STOCK_ONLY)); then
-    say "  After it finishes the device boots stock .31 and stays there."
-  else
-    say "  After it finishes the device boots stock .31. Enable USB debugging"
-    say "  again and run ./install.sh to install AshFall."
-  fi
-  say ""
+  local -a paths=()
 
   zip=$(sevenzip) || die "7-Zip is required to unpack the stock firmware (macOS: brew install p7zip; Debian/Ubuntu: apt install p7zip-full; Windows: 7-Zip)"
   need curl
   command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 ||
-    die "need sha256sum or shasum"
+    die "need sha256sum or shasum to verify the firmware"
 
   mkdir -p "$FW_DIR/parts" "$FW_DIR/images"
 
-  # Disk: only the missing volumes + the unpacked images.
   need_kb=0
   for i in "${!FW_VOLUMES[@]}"; do
     f="$FW_DIR/parts/fw.7z.${FW_VOLUMES[$i]}"
@@ -226,7 +220,7 @@ migrate_base() {
   need_kb=$((need_kb + 14000000))
   free_kb=$(df -Pk "$FW_DIR" | awk 'NR==2{print $4}')
   ((free_kb > need_kb)) ||
-    die "not enough disk space in $FW_DIR: need about $((need_kb / 1024 / 1024)) GB free (3.1 GB download + 13.2 GB unpacked)"
+    die "not enough disk space in $FW_DIR: need about $((need_kb / 1024 / 1024)) GB free (3.1 GB download + 13.3 GB unpacked)"
   ok "disk space: $((free_kb / 1024 / 1024)) GB free, need $((need_kb / 1024 / 1024)) GB"
 
   step "Downloading the .31 stock firmware"
@@ -248,7 +242,6 @@ migrate_base() {
   done
 
   step "Unpacking the stock images"
-  local -a paths=()
   for img in "${FW_IMAGES[@]}"; do
     IFS='|' read -r path part bytes sha <<<"$img"
     [[ -f $FW_DIR/images/$path ]] && [[ $(stat_size "$FW_DIR/images/$path") == "$bytes" ]] ||
@@ -268,10 +261,96 @@ migrate_base() {
     [[ $got == "$sha" ]] || die "$path checksum mismatch; delete $FW_DIR and re-run"
     ok "$part verified ($(human "$bytes"))"
   done
+}
+
+# flash_base <adb|fastboot>: one fastboot process for every base write.
+#   adb      - the device is in Android; reboot to the bootloader first
+#   fastboot - the device is already in the bootloader (rescue path)
+flash_base() {
+  local mode=$1 path part bytes sha img product unlocked i
+  local -a BATCH=()
+
+  if [[ $mode == adb ]]; then
+    step "Rebooting to the bootloader"
+    adb_ reboot bootloader
+    for ((i = 0; i < 90; i++)); do
+      fb_ devices 2>/dev/null | grep -q "$SERIAL" && break
+      sleep 1
+    done
+  fi
+  fb_ devices 2>/dev/null | grep -q "$SERIAL" ||
+    die "the device is not in the bootloader.
+       Hold Power ~15 s, then Volume Down + Power until the fastboot screen
+       appears, then re-run:  $0 --rescue${SERIAL:+ --serial $SERIAL}"
+
+  # Getvars are advisory here: this ABL answers some of them only on a fresh
+  # session, and a rescue must not depend on a flaky variable service.
+  product=$(fb_getvar product)
+  unlocked=$(fb_getvar unlocked)
+  if [[ -n $product && $product != kona ]]; then
+    die "the bootloader reports product '$product', expected 'kona' (wrong device?)"
+  fi
+  if [[ $unlocked == no ]]; then
+    die "the bootloader is locked; unlock it first (adb reboot bootloader; fastboot flashing unlock) and re-run"
+  fi
+  if [[ $product == kona ]]; then
+    ok "bootloader: kona, unlocked=${unlocked:-unknown}"
+  else
+    warn "the bootloader did not report a product (wedged getvars); continuing - only a kona reaches this point"
+  fi
+
+  for img in "${FW_IMAGES[@]}"; do
+    IFS='|' read -r path part bytes sha <<<"$img"
+    BATCH+=(flash "$part" "$FW_DIR/images/$path")
+  done
+  BATCH+=(erase userdata erase metadata set_active a reboot)
+
+  say "one fastboot process: ${#FW_IMAGES[@]} flashes + wipe + set_active a + reboot"
+  say "this takes 15-20 minutes; do not unplug, do not open another fastboot"
+  if ! fb_ "${BATCH[@]}"; then
+    die "the base flash did not finish.
+       Do NOT unplug. Run: fastboot -s $SERIAL reboot   (or hold Power 15 s)
+       Then re-run:  $0 --rescue
+       The verified images are cached in $FW_DIR/images, so a retry is fast."
+  fi
+}
+
+# migrate_base: base -> stop -> the user finishes the install in a second run.
+migrate_base() {
+  if ((STOCK_ONLY)); then
+    step "Restore the stock .31 system"
+    say "  Flashes the stock .31 firmware and wipes data. The device stays on"
+    say "  stock Android 13 afterwards unless --then-install was given."
+  else
+    step "Base firmware: retail .189 -> AshFall base .31"
+    say "  AshFall is an Android 17 system on the Android 13 / 5.15 vendor of the"
+    say "  pre-release .31 firmware. This RP5 runs the retail firmware (vendor"
+    say "  SDK ${VENDOR_SDK:-?}), which cannot boot it."
+  fi
+  say ""
+  say "  The installer will install the complete stock .31 base first:"
+  say "    download   3.1 GB (public Retroid package, pinned SHA-256)"
+  say "    unpack     13.3 GB (super + boot chain + recovery)"
+  say "    flash      super, boot, init_boot, vendor_boot, dtbo, vbmeta,"
+  say "               vbmeta_system, recovery_a/b in ONE fastboot process"
+  say "    wipe       userdata + metadata (all data is lost)"
+  say ""
+  if ((THEN_INSTALL)); then
+    say "  After it finishes the device boots stock .31; the installer then waits"
+    say "  for USB debugging to come back and installs AshFall in the same run."
+  elif ((STOCK_ONLY)); then
+    say "  After it finishes the device boots stock .31 and stays there."
+  else
+    say "  After it finishes the device boots stock .31. Enable USB debugging"
+    say "  again and run ./install.sh to install AshFall."
+  fi
+  say ""
+
+  fetch_base_images
 
   step "Plan: install the stock .31 base"
   say "  device:   Retroid Pocket 5, serial $SERIAL"
-  say "  writes:   super (12 GiB) + boot chain, slot A, ONE fastboot process"
+  say "  writes:   super (12 GiB) + boot chain + recovery, slot A, ONE fastboot process"
   say "  wipes:    userdata + metadata"
   if ((THEN_INSTALL)); then
     say "  then:     boots stock .31, waits for USB debugging, installs AshFall"
@@ -294,30 +373,7 @@ migrate_base() {
     return 0
   fi
 
-  step "Flashing the stock .31 base (one fastboot process)"
-  adb_ reboot bootloader
-  for ((i = 0; i < 90; i++)); do
-    fb_ devices 2>/dev/null | grep -q "$SERIAL" && break
-    sleep 1
-  done
-  fb_ devices 2>/dev/null | grep -q "$SERIAL" ||
-    die "device did not reach the bootloader. Hold Power 15 s, then Power+Volume Down, and re-run"
-  PRODUCT=$(fb_getvar product)
-  UNLOCKED=$(fb_getvar unlocked)
-  [[ $PRODUCT == kona ]] || die "bootloader reports product '${PRODUCT:-unknown}', expected 'kona'"
-  [[ $UNLOCKED == yes ]] || die "the bootloader is locked; unlock it first (fastboot flashing unlock, this wipes data)"
-  ok "bootloader: kona, unlocked"
-
-  local -a BATCH=()
-  for img in "${FW_IMAGES[@]}"; do
-    IFS='|' read -r path part bytes sha <<<"$img"
-    BATCH+=(flash "$part" "$FW_DIR/images/$path")
-  done
-  BATCH+=(erase userdata erase metadata set_active a reboot)
-  say "flashing 7 partitions + wipe + reboot; this takes 15-20 minutes, do not unplug"
-  fb_ "${BATCH[@]}" ||
-    die "the base flash failed. Do NOT unplug; run 'fastboot -s $SERIAL reboot' (or hold Power 15 s), then re-run the installer"
-
+  flash_base adb
   ok "stock .31 base installed"
 
   if ((THEN_INSTALL)); then
@@ -343,6 +399,48 @@ migrate_base() {
   exit 0
 }
 
+# rescue_base: the same base restore, but starting from the bootloader and
+# needing no adb, no Android and no fastbootd. This is the supported way out of
+# a crash-dump loop, a wedged slot or a half-finished install.
+rescue_base() {
+  step "Rescue: reinstall the complete stock .31 base"
+  say "  Works from the bootloader only (no Android, no fastbootd needed)."
+  say "  Wipes userdata + metadata and pins slot A."
+  say ""
+
+  if [[ -z $SERIAL ]]; then
+    local -a devs=()
+    while IFS= read -r line; do devs+=("$line"); done < <(fastboot devices 2>/dev/null | awk '{print $1}')
+    case ${#devs[@]} in
+      1) SERIAL=${devs[0]} ;;
+      0) die "no device in fastboot. Hold Power ~15 s, then Volume Down + Power until the fastboot screen appears, and re-run:  $0 --rescue" ;;
+      *) die "several devices in fastboot (${devs[*]}); pick one with --serial" ;;
+    esac
+  fi
+  fb_ devices 2>/dev/null | grep -q "$SERIAL" ||
+    die "device $SERIAL is not in fastboot. Hold Power ~15 s, then Volume Down + Power, and re-run:  $0 --rescue"
+  ok "fastboot device $SERIAL"
+
+  fetch_base_images
+
+  if ((DRY_RUN)); then
+    ok "dry run: firmware downloaded and verified, nothing was flashed"
+    return 0
+  fi
+  if ((!ASSUME_YES)); then
+    printf '\nType "rescue" to wipe this device and write the stock .31 base: '
+    read -r answer
+    [[ $answer == rescue ]] || die "aborted by the user"
+  fi
+
+  flash_base fastboot
+  ok "stock .31 base restored"
+  say ""
+  say "  The device is rebooting to stock Android 13 (2-5 minutes, setup wizard)."
+  say "  Then enable USB debugging and run ./install.sh to install AshFall."
+  exit 0
+}
+
 # wait_for_debug: after a wipe the adb keys are gone, so a --then-install run
 # has to wait for the user to finish setup and re-authorise this computer.
 wait_for_debug() {
@@ -364,8 +462,14 @@ wait_for_debug() {
     if ((frames % 10 == 0)); then say "  still waiting... (${frames} checks)"; fi
     sleep 3
   done
-  die "USB debugging did not come back within $((WAIT_DEBUG / 60)) min. The device is on stock .31; enable USB debugging and run ./install.sh when ready (do not re-run this restore - it would wipe again)."
+  die "USB debugging did not come back within $((WAIT_DEBUG / 60)) min. The device is on stock .31; enable USB debugging and run ./install.sh when ready (do not re-run the restore - it would wipe again)."
 }
+
+# --- rescue: bootloader-only, no adb, no fastbootd ---------------------------
+if ((RESCUE)); then
+  rescue_base
+  exit 0
+fi
 
 # --- preflight ---------------------------------------------------------------
 step "Checking the device"
@@ -544,7 +648,14 @@ for ((i = 0; i < 120; i++)); do
   sleep 1
 done
 [[ $MODE == yes ]] ||
-  die "the device did not reach fastbootd. Unplug and re-plug the USB cable, then re-run; see docs/recovery.md if it repeats"
+  die "the device did not reach fastbootd.
+       If the screen went black and the device disappeared from lsusb, it
+       panicked instead of booting fastbootd. Power-cycle it (hold Power 15 s),
+       then Volume Down + Power for the bootloader, and run:
+         $0 --rescue
+       That rewrites the complete stock .31 base (including recovery) from the
+       bootloader and does not need Android or fastbootd.
+       Otherwise re-plug the USB cable and re-run."
 SLOT=$(fb_getvar current-slot)
 case $SLOT in a|b) : ;; *) die "unexpected current slot '${SLOT:-empty}'" ;; esac
 ok "fastbootd, slot $SLOT"

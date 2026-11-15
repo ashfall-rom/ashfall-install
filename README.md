@@ -113,6 +113,20 @@ with the normal install in the same run — so a "clean reinstall" is one comman
 Without it the device simply stays on stock `.31`; run `./install.sh` when you
 want AshFall back.
 
+If the device cannot boot Android or fastbootd at all (crash-dump mode
+`05c6:900e`, wedged slot, half-finished install), use the bootloader-only
+rescue:
+
+```bash
+# device in the bootloader (Power 15 s, then Volume Down + Power)
+./install.sh --rescue
+```
+
+It rewrites the **complete** stock `.31` base — `super`, boot chain, `vbmeta`,
+`vbmeta_system` and `recovery` — pins slot A, wipes data, and needs no adb.
+This is also the supported fix if a previous installer ever left you with a
+black screen after the logo.
+
 Both are the same code path the installer uses to migrate a retail `.189`
 device, so there is one implementation, one set of pinned hashes.
 
