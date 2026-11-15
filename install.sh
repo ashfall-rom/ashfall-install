@@ -206,6 +206,28 @@ wait_for_bootloader() {
   return 1
 }
 
+# fastboot/adb wrappers (defined before any mode so --rescue works)
+adb_() { adb -s "$SERIAL" "$@"; }
+fb_() { fastboot -s "$SERIAL" "$@"; }
+# fb_getvar <name>: value of one fastboot variable, with or without the
+# "(bootloader) " prefix some ABL versions print, and with CRs stripped.
+# The RP5 bootloader answers "GetVar Variable Not found" for variables that
+# exist a moment later (observed repeatedly), so retry before believing an
+# empty answer.
+fb_getvar() {
+  local var=$1 i out
+  for i in 1 2 3 4 5; do
+    out=$(fb_ getvar "$var" 2>&1 | tr -d '\r' |
+      sed -n -e 's/^([a-z]*)[[:space:]]*//' -e "s/^$var: //p" | head -1)
+    if [[ -n $out ]]; then
+      printf '%s' "$out"
+      return 0
+    fi
+    sleep 1
+  done
+  return 0
+}
+
 verify_one() {
   local name=$1 want got
   want=$(awk -v n="$name" '$2==n{print $1; exit}' "$SUM_FILE")
@@ -456,18 +478,51 @@ rescue_base() {
   say "  Wipes userdata + metadata and pins slot A."
   say ""
 
-  if [[ -z $SERIAL ]]; then
-    local -a devs=()
-    while IFS= read -r line; do devs+=("$line"); done < <(fastboot devices 2>/dev/null | awk '{print $1}')
-    case ${#devs[@]} in
-      1) SERIAL=${devs[0]} ;;
-      0) die "no device in fastboot. Hold Power ~15 s, then Volume Down + Power until the fastboot screen appears, and re-run:  $0 --rescue" ;;
-      *) die "several devices in fastboot (${devs[*]}); pick one with --serial" ;;
+  local -a boot=() other=()
+  local dev mode try
+  for try in 1 2 3; do
+    boot=()
+    other=()
+    while read -r dev mode; do
+      [[ -n $dev ]] || continue
+      case $mode in
+        fastboot) boot+=("$dev") ;;
+        *) other+=("$dev") ;;
+      esac
+    done < <(fastboot devices 2>/dev/null)
+    ((${#boot[@]})) && break
+    # A reboot from fastbootd/Android can take a few seconds to enumerate.
+    ((try < 3)) && sleep 5
+  done
+
+  if [[ -n $SERIAL ]]; then
+    if ! printf '%s\n' "${boot[@]}" | grep -qx "$SERIAL"; then
+      if printf '%s\n' "${other[@]}" | grep -qx "$SERIAL"; then
+        die "device $SERIAL is in fastbootd, not the bootloader.
+       Run:  fastboot reboot bootloader
+       then: $0 --rescue"
+      fi
+      die "device $SERIAL is not in fastboot.
+       Hold Power ~15 s, then Volume Down + Power until the fastboot screen
+       appears, then re-run:  $0 --rescue${SERIAL:+ --serial $SERIAL}"
+    fi
+  else
+    case ${#boot[@]} in
+      1) SERIAL=${boot[0]} ;;
+      0)
+        if ((${#other[@]})); then
+          die "the device is in fastbootd, not the bootloader.
+       Run:  fastboot reboot bootloader
+       then: $0 --rescue"
+        fi
+        die "no device in fastboot.
+       Hold Power ~15 s, then Volume Down + Power until the fastboot screen
+       appears, then re-run:  $0 --rescue"
+        ;;
+      *) die "several bootloader-mode devices (${boot[*]}); pick one with --serial" ;;
     esac
   fi
-  fb_ devices 2>/dev/null | grep -q "$SERIAL" ||
-    die "device $SERIAL is not in fastboot. Hold Power ~15 s, then Volume Down + Power, and re-run:  $0 --rescue"
-  ok "fastboot device $SERIAL"
+  ok "fastboot device $SERIAL (bootloader mode)"
 
   fetch_base_images
 
@@ -540,26 +595,6 @@ else
   esac
 fi
 
-adb_() { adb -s "$SERIAL" "$@"; }
-fb_() { fastboot -s "$SERIAL" "$@"; }
-# fb_getvar <name>: value of one fastboot variable, with or without the
-# "(bootloader) " prefix some ABL versions print, and with CRs stripped.
-# The RP5 bootloader answers "GetVar Variable Not found" for variables that
-# exist a moment later (observed repeatedly), so retry before believing an
-# empty answer.
-fb_getvar() {
-  local var=$1 i out
-  for i in 1 2 3 4 5; do
-    out=$(fb_ getvar "$var" 2>&1 | tr -d '\r' |
-      sed -n -e 's/^([a-z]*)[[:space:]]*//' -e "s/^$var: //p" | head -1)
-    if [[ -n $out ]]; then
-      printf '%s' "$out"
-      return 0
-    fi
-    sleep 1
-  done
-  return 0
-}
 
 PLATFORM=$(adb_ shell getprop ro.board.platform 2>/dev/null | tr -d '\r')
 [[ $PLATFORM == kona ]] || die "this is not a Retroid Pocket 5 (ro.board.platform='${PLATFORM:-unknown}', expected 'kona'). Nothing was written."
