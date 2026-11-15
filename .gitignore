@@ -1,0 +1,5 @@
+# Downloads and unpacked images live here.
+ashfall-download/
+*.img
+*.img.xz
+releases/*/tmp/
