@@ -373,7 +373,7 @@ fetch_base_images() {
 #   adb      - the device is in Android; reboot to the bootloader first
 #   fastboot - the device is already in the bootloader (rescue path)
 flash_base() {
-  local mode=$1 path part bytes sha img product unlocked i
+  local mode=$1 path part bytes sha img i
   local -a BATCH=()
 
   if [[ $mode == adb ]]; then
