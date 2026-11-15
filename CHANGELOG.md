@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **`restore-stock.sh`**: put the device back on the stock `.31` firmware
+  (pinned download, one fastboot process, wipes data). `--then-install` waits
+  for USB debugging to come back and installs AshFall in the same run, so a
+  clean reinstall is one command.
+- **`install.sh --stock [--then-install] [--wait-debug N]`**: the same path,
+  reachable from the installer.
+- The installer now refuses retail firmware with a clear message instead of
+  bootlooping on it, and the stock-firmware migration is part of `install.sh`
+  (retail `.189` -> `.31` base -> AshFall).
+- Fixed several `set -e` traps that could abort the firmware path instead of
+  retrying (`fb_getvar`, kick/asset one-liners).
+
 ## v0.1.0 - 2026-11-15
 
 First installable AshFall release for the Retroid Pocket 5.

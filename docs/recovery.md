@@ -41,6 +41,16 @@ fastboot --disable-verity --disable-verification flash vbmeta stock-vbmeta.img \
 
 One process again — never two `fastboot` invocations for these writes.
 
+## Back to the stock ROM from the installer
+
+```bash
+./restore-stock.sh                 # stock .31, wipe, stay on stock
+./restore-stock.sh --then-install  # stock .31, then reinstall AshFall
+```
+
+This is the supported route: it uses the pinned `.31` package and the single
+fastboot batch. Use the manual steps below only when the installer cannot run.
+
 ## Back to the stock ROM completely
 
 That is the stock-firmware restore path, not something this repository

@@ -95,6 +95,27 @@ NEVER-flash list. Both `vendor_boot` and `vbmeta` are written in **one fastboot
 process**, because the RP5 bootloader wedges when a second one opens between
 transfers.
 
+## Back to stock
+
+The installer can put the device back on the stock `.31` firmware (3.1 GB
+download, ~13 GB temp disk, `super` + boot chain in one fastboot process,
+**erases data**):
+
+```bash
+./restore-stock.sh                 # restore stock .31 and stay there
+./restore-stock.sh --then-install  # restore, then wait until you re-enable
+                                   # USB debugging and install AshFall again
+```
+
+With `--then-install` the script stops after the stock flash, prints the
+Developer-options steps, polls until adb is authorised again and then continues
+with the normal install in the same run — so a "clean reinstall" is one command.
+Without it the device simply stays on stock `.31`; run `./install.sh` when you
+want AshFall back.
+
+Both are the same code path the installer uses to migrate a retail `.189`
+device, so there is one implementation, one set of pinned hashes.
+
 ## First boot, updates, recovery
 
 - **Bootloop or stuck on the animation**: usually stale `/data` from another
@@ -102,8 +123,10 @@ transfers.
 - **"no space left" during the system flash**: the installer prints the two
   `delete-logical-partition` commands to free the stock `product_*` /
   `system_ext_*` and re-run.
-- **Back to stock**: `docs/recovery.md` (stock `vendor_boot` first, then a
-  stock firmware restore).
+- **Back to stock**: `./restore-stock.sh` (full stock `.31`, wipes data) or
+  `./restore-stock.sh --then-install` (restore + reinstall AshFall). Partial
+  recovery (stock `vendor_boot` only, keeping the current install) is in
+  `docs/recovery.md`.
 - **Updates**: `git pull` (new `VERSION` + `releases/<tag>/SHA256SUMS`), then
   `./install.sh`. Data is kept.
 
