@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Verified end-to-end on hardware (2026-11-15):** `--rescue` wrote the
+  complete `.31` base (12 GiB `super`, chunked at 512 MiB) and a normal
+  `./install.sh` then flashed the AshFall system image + `vendor_boot`. The RP5
+  boots AshFall on slot A with `ashfall-hwd` publishing status.
+- **Slow writes are normal here:** after the 12 GiB `super` write, even a 96 MiB
+  `Writing 'boot_a'` can take several minutes on this UFS (observed: ~10 min for
+  that step). The base batch allows 60 minutes; do not unplug and do not start
+  another fastboot.
 - **No silent exits.** `set -euo pipefail` plus a guard that ran `pgrep -x
   fastboot` (which exits 1 when nothing matches) made `--rescue` exit right
   after the confirmation with no message. `fastboot_clients()` now never

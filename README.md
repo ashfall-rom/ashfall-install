@@ -82,6 +82,11 @@ Useful options:
 
 The first boot takes 2–5 minutes. When it is up: **Settings → AshFall settings**.
 
+Long writes can look stalled for several minutes after the transfer bar reaches
+100 % (`Writing 'boot_a'` took ~10 minutes once on this UFS). That is the flash
+completing, not a hang: the base batch allows 60 minutes and the installer
+refuses to run beside another `fastboot` client. Do not unplug.
+
 ## What gets written
 
 | partition | content | why |
