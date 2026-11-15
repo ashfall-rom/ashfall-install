@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **No silent exits.** `set -euo pipefail` plus a guard that ran `pgrep -x
+  fastboot` (which exits 1 when nothing matches) made `--rescue` exit right
+  after the confirmation with no message. `fastboot_clients()` now never
+  returns non-zero for "no client found", and an `ERR` trap prints the failing
+  line and command for any unhandled failure.
 - **No more getvar gate; one client only.** A Qualcomm ABL with a healthy
   variable service can still answer erratically once a *second* fastboot client
   is reading the same replies (mixing `GetVar Variable Not found` with

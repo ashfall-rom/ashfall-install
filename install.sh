@@ -42,6 +42,8 @@
 # is given, and verifies every file against the checksums committed in
 # releases/<tag>/SHA256SUMS before anything reaches the device.
 set -euo pipefail
+# Never die silently: any unhandled non-zero status prints the failing command.
+trap 'rc=$?; printf "\nerr unexpected failure (exit %s) at line %s: %s\n" "$rc" "$LINENO" "$BASH_COMMAND" >&2; exit "$rc"' ERR
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO="ashfall-rom/ashfall-install"
@@ -199,16 +201,20 @@ fb_batch() {
 # between sessions).  Never run a batch while another fastboot exists - the
 # installer has to be the only one.
 fastboot_clients() {
+  local out=""
   if command -v pgrep >/dev/null 2>&1; then
-    pgrep -x fastboot 2>/dev/null | tr '\n' ' '
+    # pgrep exits 1 when nothing matches; that is the healthy case, so never let
+    # it abort the script under set -e / pipefail.
+    out=$(pgrep -x fastboot 2>/dev/null | tr '\n' ' ' || true)
   else
-    ps -A -o comm= 2>/dev/null | awk '$1=="fastboot"{printf "%s ", $2}'
+    out=$(ps -A -o comm= 2>/dev/null | awk '$1=="fastboot"{printf "%s ", $2}' || true)
   fi
+  printf '%s' "$out"
 }
 
 guard_single_fastboot() {
   local pids
-  pids=$(fastboot_clients)
+  pids=$(fastboot_clients || true)
   [[ -z $pids ]] || die "another fastboot process is running (PID: $pids).
        Two fastboot clients on this bootloader corrupt each other's replies -
        that is what 'GetVar Variable Not found' mixed with 'unknown command'
@@ -642,7 +648,7 @@ else
 fi
 
 
-PLATFORM=$(adb_ shell getprop ro.board.platform 2>/dev/null | tr -d '\r')
+PLATFORM=$(adb_ shell getprop ro.board.platform 2>/dev/null | tr -d '\r' || true)
 [[ $PLATFORM == kona ]] || die "this is not a Retroid Pocket 5 (ro.board.platform='${PLATFORM:-unknown}', expected 'kona'). Nothing was written."
 
 # The stock vendor branch is the hard compatibility boundary: AshFall is an
@@ -650,15 +656,15 @@ PLATFORM=$(adb_ shell getprop ro.board.platform 2>/dev/null | tr -d '\r')
 # .31 firmware. The retail .34-.189 line ships an Android 11 vendor, a 4.19
 # kernel and VINTF level 5, and Android 17 has no compatibility matrix for it.
 # Flashing there would bootloop, so refuse before anything is downloaded.
-VENDOR_SDK=$(adb_ shell getprop ro.vendor.build.version.sdk 2>/dev/null | tr -d '\r')
+VENDOR_SDK=$(adb_ shell getprop ro.vendor.build.version.sdk 2>/dev/null | tr -d '\r' || true)
 VENDOR_SDK=${ASH_INSTALLER_TEST_VENDOR_SDK:-$VENDOR_SDK}
 BASE_OK=0
 if [[ $VENDOR_SDK == 33 ]]; then BASE_OK=1; fi
-BATTERY=$(adb_ shell dumpsys battery 2>/dev/null | awk -F': ' '/level/{print $2; exit}' | tr -d '\r')
+BATTERY=$(adb_ shell dumpsys battery 2>/dev/null | awk -F': ' '/level/{print $2; exit}' | tr -d '\r' || true)
 if [[ ${BATTERY:-0} =~ ^[0-9]+$ ]] && ((BATTERY < 30)); then
   die "battery is ${BATTERY}%; charge to at least 30% before flashing"
 fi
-CUR_SLOT=$(adb_ shell getprop ro.boot.slot_suffix 2>/dev/null | tr -d '\r')
+CUR_SLOT=$(adb_ shell getprop ro.boot.slot_suffix 2>/dev/null | tr -d '\r' || true)
 if ((BASE_OK)); then
   ok "Retroid Pocket 5 (kona), Android 13 vendor (SDK 33), battery ${BATTERY:-unknown}%, slot ${CUR_SLOT:-unknown}, serial $SERIAL"
 else
