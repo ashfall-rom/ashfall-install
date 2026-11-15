@@ -14,7 +14,9 @@
 #   ./install.sh --dry-run        # download + verify, print the plan, no writes
 #   ./install.sh --resume         # phase 1 (system) already flashed: redo only
 #                                 # the bootloader phase
-#   ./install.sh --wipe           # erase userdata/metadata too (clean install)
+#   ./install.sh                  # erase userdata + metadata and install
+#   ./install.sh --wipe           # accepted for compatibility; data is always
+#                                 # erased
 #   ./install.sh --no-oc          # keep the stock vendor_boot (no GPU overclock)
 #   ./install.sh --migrate        # force the stock .31 base install (repair;
 #                                 # wipes data) even if the base looks right
@@ -38,8 +40,9 @@
 # access to the release repo), xz, sha256sum or shasum.
 #
 # Safety: refuses a non-RP5, a locked bootloader and a battery below 30 %,
-# writes only system_<slot>, vendor_boot and vbmeta, never wipes unless --wipe
-# is given, and verifies every file against the checksums committed in
+# writes only system_<slot>, vendor_boot and vbmeta, always erases userdata +
+# metadata (a no-wipe install from stock leaves foreign /data and breaks
+# features), and verifies every file against the checksums committed in
 # releases/<tag>/SHA256SUMS before anything reaches the device.
 set -euo pipefail
 # Never die silently: any unhandled non-zero status prints the failing command.
@@ -82,7 +85,7 @@ FW_DIR="$DL_ROOT/stock-31"
 
 TAG=""
 SERIAL=""
-WIPE=0
+WIPE=1  # mandatory: a no-wipe install from stock breaks features
 OC=1
 ASSUME_YES=0
 DRY_RUN=0
@@ -682,7 +685,7 @@ if ((CHECK_ONLY)); then
   else
     say "release:   $TAG"
     say "checksums: $SUM_FILE"
-    say "would flash: $( ((BASE_OK)) || printf 'stock .31 base, then ' )system image$( ((OC)) && printf ' + GPU vendor_boot')$([[ $WIPE == 1 ]] && printf ' + wipe userdata/metadata')"
+    say "would flash: $( ((BASE_OK)) || printf 'stock .31 base, then ' )system image$( ((OC)) && printf ' + GPU vendor_boot') + wipe userdata/metadata"
   fi
   ok "ready (nothing was downloaded or written)"
   exit 0
@@ -760,10 +763,11 @@ else
   say "  GPU:          stock vendor_boot kept (no overclock)"
 fi
 say "  boot:         verification off (vbmeta flags=3, required for a GSI)"
-say "  data:         $([[ $WIPE == 1 ]] && echo 'ERASED (--wipe)' || echo 'kept')"
+say "  data:         ERASED (mandatory: userdata + metadata)"
 say ""
 say "  The device reboots twice and runs two flashes. Do not unplug it, do not touch buttons."
 if ((!ASSUME_YES)); then
+  warn "this ERASES all data on the device: userdata + metadata"
   printf '\nContinue? [y/N] '
   read -r answer
   case $answer in y|Y|yes) : ;; *) die "aborted by the user" ;; esac
