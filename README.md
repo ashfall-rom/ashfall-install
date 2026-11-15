@@ -25,6 +25,7 @@ and it keeps your data unless you pass `--wipe`.
 | | |
 |---|---|
 | Device | Retroid Pocket 5 (SM8250 "kona"), bootloader **unlocked** |
+| Base firmware | the pre-release stock **`.31`** vendor (Android 13, 5.15 GKI). Retail `.34`–`.189` units ship a 4.19 vendor and are **not** supported |
 | Cable | USB-C data cable (not charge-only) |
 | Computer | Linux, macOS or WSL with `adb`, `fastboot`, `gh`, `xz` |
 | Disk | ~5 GB free for the download + unpacked image |
@@ -115,3 +116,18 @@ transfers.
 path without WSL). `docs/how-it-works.md` explains what each artifact is and
 why. This repository is Apache-2.0; the firmware inside the release assets is
 not.
+
+## Releasing a new version
+
+The ROM repository builds, this repository ships. For a new ROM build:
+
+1. Build it there (`scripts/build.sh`), then compress the artifact on the build
+   host: `xz -T12 -6 -c system.img > system.img.xz` (~880 MB).
+2. Create a new tag here with the assets `system.img.xz`, `vendor_boot.img`
+   (from the pinned `ashfall-rom/rp5-vendor_boot` release), `vbmeta.img`
+   (stock) and `SHA256SUMS`.
+3. Add `releases/<tag>/SHA256SUMS` (compressed **and** unpacked `system.img`
+   hashes) and bump `VERSION`, then commit.
+4. `./install.sh --release <tag> --dry-run` against the new tag before
+   announcing it.
+

@@ -120,6 +120,12 @@ fi
 
 adb_() { adb -s "$SERIAL" "$@"; }
 fb_() { fastboot -s "$SERIAL" "$@"; }
+# fb_getvar <name>: value of one fastboot variable, with or without the
+# "(bootloader) " prefix some ABL versions print, and with CRs stripped.
+fb_getvar() {
+  fb_ getvar "$1" 2>&1 | tr -d '\r' |
+    sed -n -e 's/^([a-z]*)[[:space:]]*//' -e "s/^$1: //p" | head -1
+}
 
 PLATFORM=$(adb_ shell getprop ro.board.platform 2>/dev/null | tr -d '\r')
 [[ $PLATFORM == kona ]] || die "this is not a Retroid Pocket 5 (ro.board.platform='${PLATFORM:-unknown}', expected 'kona'). Nothing was written."
@@ -211,13 +217,13 @@ step "Phase 1/2: system image (fastbootd)"
 adb_ reboot fastboot
 MODE=""
 for ((i = 0; i < 120; i++)); do
-  MODE=$(fb_ getvar is-userspace 2>&1 || true)
-  printf '%s' "$MODE" | grep -q 'is-userspace: yes' && break
+  MODE=$(fb_getvar is-userspace)
+  [[ $MODE == yes ]] && break
   sleep 1
 done
-printf '%s' "$MODE" | grep -q 'is-userspace: yes' ||
+[[ $MODE == yes ]] ||
   die "the device did not reach fastbootd. Unplug and re-plug the USB cable, then re-run; see docs/recovery.md if it repeats"
-SLOT=$(fb_ getvar current-slot 2>&1 | sed -n 's/^current-slot: //p' | head -1)
+SLOT=$(fb_getvar current-slot)
 case $SLOT in a|b) : ;; *) die "unexpected current slot '${SLOT:-empty}'" ;; esac
 ok "fastbootd, slot $SLOT"
 
@@ -258,8 +264,8 @@ fi
 fb_ devices 2>/dev/null | grep -q "$SERIAL" ||
   die "device did not reach the bootloader. Hold Power 15 s, then Power+Volume Down, and re-run; see docs/recovery.md"
 
-PRODUCT=$(fb_ getvar product 2>&1 | sed -e 's/^(bootloader)[[:space:]]*//' -n 's/^product: //p' | head -1)
-UNLOCKED=$(fb_ getvar unlocked 2>&1 | sed -e 's/^(bootloader)[[:space:]]*//' -n 's/^unlocked: //p' | head -1)
+PRODUCT=$(fb_getvar product)
+UNLOCKED=$(fb_getvar unlocked)
 [[ $PRODUCT == kona ]] || die "bootloader reports product '${PRODUCT:-unknown}', expected 'kona'"
 [[ $UNLOCKED == yes ]] ||
   die "the bootloader is locked. Unlock it first: adb reboot bootloader && fastboot flashing unlock, confirm on the device (this erases data), then re-run"
