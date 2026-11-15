@@ -25,11 +25,12 @@ and it keeps your data unless you pass `--wipe`.
 | | |
 |---|---|
 | Device | Retroid Pocket 5 (SM8250 "kona"), bootloader **unlocked** |
-| Base firmware | the pre-release stock **`.31`** vendor (Android 13, 5.15 GKI). Retail `.34`–`.189` units ship a 4.19 vendor and are **not** supported |
+| Base firmware | the pre-release stock **`.31`** vendor (Android 13, 5.15 GKI). Retail `.34`–`.189` units ship an Android 11 vendor + 4.19 kernel and are **not** supported; the installer refuses them (vendor SDK check) |
 | Cable | USB-C data cable (not charge-only) |
 | Computer | Linux, macOS or WSL with `adb`, `fastboot`, `gh`, `xz` |
 | Disk | ~5 GB free for the download + unpacked image |
 | Device battery | at least 30 % |
+| Device setting | **USB debugging** on: Settings → About → tap *Build number* seven times, then Developer options → USB debugging |
 
 Install the tools in one line:
 
