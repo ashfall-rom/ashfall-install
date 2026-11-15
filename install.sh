@@ -129,12 +129,25 @@ fb_getvar() {
 
 PLATFORM=$(adb_ shell getprop ro.board.platform 2>/dev/null | tr -d '\r')
 [[ $PLATFORM == kona ]] || die "this is not a Retroid Pocket 5 (ro.board.platform='${PLATFORM:-unknown}', expected 'kona'). Nothing was written."
+
+# The stock vendor branch is the hard compatibility boundary: AshFall is an
+# Android 17 GSI which needs the Android 13 / 5.15 vendor of the pre-release
+# .31 firmware. The retail .34-.189 line ships an Android 11 vendor, a 4.19
+# kernel and VINTF level 5, and Android 17 has no compatibility matrix for it.
+# Flashing there would bootloop, so refuse before anything is downloaded.
+VENDOR_SDK=$(adb_ shell getprop ro.vendor.build.version.sdk 2>/dev/null | tr -d '\r')
+VENDOR_SDK=${ASH_INSTALLER_TEST_VENDOR_SDK:-$VENDOR_SDK}
+if [[ $VENDOR_SDK != 33 ]]; then
+  die "unsupported stock firmware: this device reports vendor SDK '${VENDOR_SDK:-unknown}', AshFall needs SDK 33 (the pre-release .31 base).
+   The retail .34-.189 firmware has an Android 11 vendor (SDK 30, VNDK 30, 4.19 kernel) and cannot run this Android 17 system image.
+   Nothing was written. See README -> Base firmware."
+fi
 BATTERY=$(adb_ shell dumpsys battery 2>/dev/null | awk -F': ' '/level/{print $2; exit}' | tr -d '\r')
 if [[ ${BATTERY:-0} =~ ^[0-9]+$ ]] && ((BATTERY < 30)); then
   die "battery is ${BATTERY}%; charge to at least 30% before flashing"
 fi
 CUR_SLOT=$(adb_ shell getprop ro.boot.slot_suffix 2>/dev/null | tr -d '\r')
-ok "Retroid Pocket 5 (kona), battery ${BATTERY:-unknown}%, slot ${CUR_SLOT:-unknown}, serial $SERIAL"
+ok "Retroid Pocket 5 (kona), Android 13 vendor (SDK 33), battery ${BATTERY:-unknown}%, slot ${CUR_SLOT:-unknown}"
 
 if ((CHECK_ONLY)); then
   step "Preflight only"
