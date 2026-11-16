@@ -1,4 +1,8 @@
-# AshFall for the Retroid Pocket 5
+<p align="center">
+  <img src="assets/brand/ashfall-icon.svg" width="88" height="88" alt="AshFall">
+</p>
+
+<h1 align="center">AshFall for the Retroid Pocket 5</h1>
 
 One command installs AshFall on an RP5: the AshFall system image (LineageOS 24
 GSI), the **AshFall settings** app (fan, lighting, controller, power) and,
