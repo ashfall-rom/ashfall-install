@@ -6,14 +6,14 @@ three artifacts, the same two flashes, the same one-process rule for the
 bootloader.
 
 Download these three files from
-`https://github.com/ashfall-rom/ashfall-install/releases/tag/v0.1.0`
+`https://github.com/ashfall-rom/ashfall-install/releases/tag/v0.2.0`
 into the same folder (private repo: you need access):
 
 - `system.img.xz` → unpack with 7-Zip (Windows) or `xz -dc system.img.xz > system.img`
 - `vendor_boot.img` (skip it if you do not want the GPU overclock)
 - `vbmeta.img`
 
-Verify the hashes against `releases/v0.1.0/SHA256SUMS` (Windows:
+Verify the hashes against `releases/v0.2.0/SHA256SUMS` (Windows:
 `certutil -hashfile system.img.xz SHA256`).
 
 ## 0. Preflight
