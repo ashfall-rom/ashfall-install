@@ -2,32 +2,6 @@
 
 ## Unreleased
 
-## v0.2.0 - 2026-11-19
-
-ROM build `798b2ab` (LineageOS 24 GSI, Android 17). The installer always erases
-userdata + metadata, so back up before updating.
-
-- **Match screen (#167):** the stick LEDs follow the screen: one literal
-  average per half, an optional delay, **Colour boost** (Off/Low/Medium/High,
-  default Medium) and **Dim dark scenes** (default on, so blacks no longer glow
-  white). The last colour is held while the screen is off and restored on wake
-  without flashing the configured colour first.
-- **Pointer (#131):** desktop mode is gone. The gamepad pointer is for the
-  external display only and now uses **R1 = left click, R2 = right click**
-  (left stick scrolls both axes, right stick moves the pointer).
-- **Home and Back buttons with Gamepad Fusion (#248):** both work again while
-  fusion is on. The Xbox controller layout Android applies had no HOME/BACK
-  entries, so the keys were dropped; they now go through a separate keyboard
-  device.
-- **Charging separation (#140):** Settings > Battery > Charging control now
-  actually stops charging. The vendor factory HAL is a no-op on this kernel;
-  the daemon drives the QTI charger pair instead. Note that this suspends the
-  charger input, so the device runs on battery while the switch is on and the
-  level drifts down slowly; that is the only separation this kernel exposes.
-- Settings > Battery also gains the PlayTime and charging-control pages, with
-  the copy cleanup from #155.
-
-
 - **The installer always wipes userdata + metadata.** A no-wipe install from
   stock keeps foreign `/data` and breaks AshFall features (display rotation,
   zram ownership, settings). `--wipe` is still accepted as a no-op; the plan,
@@ -93,6 +67,24 @@ userdata + metadata, so back up before updating.
   (retail `.189` -> `.31` base -> AshFall).
 - Fixed several `set -e` traps that could abort the firmware path instead of
   retrying (`fb_getvar`, kick/asset one-liners).
+
+## v0.2.0 - 2026-11-19
+
+ROM build `798b2ab` (LineageOS 24 GSI, Android 17). The installer always erases
+userdata + metadata, so back up before updating.
+
+- **Match screen (#167):** the stick LEDs follow the screen: one literal
+  average per half, an optional delay, **Colour boost** (Off/Low/Medium/High,
+  default Medium) and **Dim dark scenes** (default on, so blacks no longer glow
+  white). The last colour is held while the screen is off and restored on wake
+  without flashing the configured colour first.
+- **Pointer (#131):** desktop mode is gone. The gamepad pointer is for the
+  external display only and now uses **R1 = left click, R2 = right click**
+  (left stick scrolls both axes, right stick moves the pointer).
+- **Home and Back buttons with Gamepad Fusion (#248):** both work again while
+  fusion is on. The Xbox controller layout Android applies had no HOME/BACK
+  entries, so the keys were dropped; they now go through a separate keyboard
+  device.
 
 ## v0.1.0 - 2026-11-15
 

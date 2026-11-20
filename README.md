@@ -160,7 +160,7 @@ device, so there is one implementation, one set of pinned hashes.
 
 | tag | ROM build | notes |
 |---|---|---|
-| `v0.2.0` | `798b2ab` | Match screen LED sync with colour boost and dim, external-display pointer with R1/R2 clicks, Home/Back under Gamepad Fusion, working charging separation |
+| `v0.2.0` | `798b2ab` | Match screen LED sync with colour boost and dim, external-display pointer with R1/R2 clicks, Home/Back under Gamepad Fusion |
 | `v0.1.0` | `phase5-v3-1` (`eef852a`) | first public install: fan graph + fan output limits, GPU OC vendor_boot, AshFall settings v3 |
 
 `docs/manual-install.md` has the same steps as raw commands (also the Windows
